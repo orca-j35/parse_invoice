@@ -46,7 +46,7 @@ def get_invoice_data(pdf_paths: list) -> list:
             new_name = '_'.join((data_dict.get('购买方', ''),
                                  data_dict.get('发票号码', ''),
                                  data_dict.get('开票日期', ''),
-                                 data_dict.get('价税合计_小写', ''),
+                                 str(data_dict.get('价税合计_小写', '')),
                                  data_dict.get('价税合计_大写', ''), '.pdf'))
             head, tail = os.path.split(pdf_path)
             new_path = os.path.join(head, new_name)

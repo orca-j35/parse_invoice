@@ -1,27 +1,34 @@
 import pdfplumber
 import re
 import os
-import csv
 from pprint import pprint
-from datetime import datetime
+from decimal import Decimal
 
-# 用于解析发票文本内容的正则表达式
-regex = re.compile(
-    r'(?P<城市>\w*普通发票).*'
-    r'发票代码.*?(?P<发票代码>\d{12}).*?'
-    r'发票号码.*?(?P<发票号码>\d{8}).*?'
-    r'开票日期.*?(?P<开票日期>2\w+日).*?'
-    r'机器编号.*?(?P<机器编号>\d{12}).*?'
-    r'校.*?验.*?码.*?(?P<校验码>(?:\d{5}\D){3}\d{5}).*?'
-    r'名.*?称.*?[:：](?:\s*)(?P<购买方>\w*).*?'  # 购买方名称
-    r'纳税人识别号\s*?[:：](?:\s*)(?P<购买方纳税人识别号>(?:\d\s*)*(?a:\w?))?.*?'  # 购买方识别号
-    r'价税合计.*?大写[)）]\s*(?P<价税合计_大写>\w*[整分]).*?'
-    r'小写.*￥\s*(?P<价税合计_小写>\d*\.\d*).*?'
-    r'名.*?称.*?[:：](?:\s*)(?P<销售方>\w*).*?'  # 销售方名称
-    r'纳税人识别号\s*?[:：](?:\s*)(?P<销售方纳税人识别号>(?:\d\s*)\d+(?a:\w?))',  # 销售方纳税人识别号
-    flags=re.DOTALL)
+regex_list = [  # 不解析纳税人识别号
+    re.compile(r'\s?(?P<城市>\w*普通发票)'),
+    re.compile(r'发票号码\s*[:：]\s*(?P<发票号码>\d{8})?'),
+    re.compile(r'开票日期\s*[:：]\s*(?P<开票日期>.+?年.+?月.+?日)?'),
+    re.compile(r'机器编号\s*[:：]\s*(?P<机器编号>\d{12})?'),
+    re.compile(r'校\s*验\s*码\s*[:：]\s*(?P<校验码>(?:\d{5}\D*?){3}\d{5})'),
+    re.compile(
+        r'名\s*称\s*[:：]\s*(?P<购买方>\w*).*?名\s*称\s*[:：]\s*(?P<销售方>\w*)',
+        flags=re.DOTALL),
+    re.compile(r'价税合计.*?大写[)）]\s*(?P<价税合计_大写>\w*[整分角]).*?'),
+]
 
-fieldnames = regex.groupindex.keys()
+regex_amount = re.compile(r'(?<=[￥¥])\s*(?P<价税合计_小写>\d*\.\d*)')
+
+fieldnames = [
+    '城市',
+    '发票号码',
+    '开票日期',
+    '机器编号',
+    '校验码',
+    '购买方',
+    '销售方',
+    '价税合计_大写',
+    '价税合计_小写',
+]
 
 
 def get_page_text(pdf_file, page_num=0):
@@ -34,13 +41,22 @@ def get_page_text(pdf_file, page_num=0):
         return p0.extract_text()
 
 
-def parse_text(text: str) -> dict:
+def parse_text(text: str, regex_list=regex_list,
+               regex_amount=regex_amount) -> dict:
     """使用正则表达式解析text中的内容
     """
-    match_obj = regex.search(text)
-    if match_obj:
-        return match_obj.groupdict()
-    return None
+    groupdict = dict()
+    for regex in regex_list:
+        match_obj = regex.search(text)
+        if match_obj:
+            for k, v in match_obj.groupdict().items():
+                if v:
+                    v = v.replace(' ', '')
+                groupdict[k] = v
+            # groupdict.update(match_obj.groupdict())
+    groupdict['价税合计_小写'] = max(
+        [Decimal(i) for i in regex_amount.findall(text)])
+    return groupdict
 
 
 def _write2file(text, pdf_file):
@@ -61,7 +77,7 @@ def _test_parser():
     for pdf_file in pdf_files:
         text = get_page_text(pdf_file=pdf_file)
         _write2file(text, pdf_file)
-        invoice_data = parse_text(text)
+        invoice_data = parse_text(text, regex_list, regex_amount)
         pprint(invoice_data)
 
 
