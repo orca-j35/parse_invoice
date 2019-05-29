@@ -35,13 +35,13 @@ class Invoice(dict):
     ]
 
     def __init__(self, pdf_path):
-        self._raw_pdf_path = pdf_path
-        self.pdf_path: str  # 由于可能会重命名pdf文件，所以此变量才是真实的文件路径
         self.is_success: bool  # 是否成功解析到了regex_list和regex_amount中的所有内容
+        self.pdf_path = pdf_path
         self.page0_text = self.get_page_text(pdf_path)
         self.data_dict = self.get_data_dict(self.page0_text)
+        # self.rename()
+
         super().__init__(self.data_dict)
-        self.rename()
 
     def get_page_text(self, pdf_path, page_num=0):
         """提取电子发票某一页中的文本.
@@ -50,10 +50,11 @@ class Invoice(dict):
         """
         with pdfplumber.open(pdf_path) as pdf:
             p0 = pdf.pages[page_num]
-            return p0.extract_text()
+            text = p0.extract_text()
+            return '' if text is None else text
 
     def get_data_dict(self, text: str) -> dict:
-        """使用正则表达式解析text中的内容
+        """使用正则表达式解析并获取text中的内容
         """
         self.is_success = True
         data_dict = dict()
@@ -76,20 +77,36 @@ class Invoice(dict):
         return data_dict
 
     def rename(self):
+        """对pdf文件重命名
+        """
+
         if self.is_success:
-            head, tail = os.path.split(self._raw_pdf_path)
-            pdf_path = os.path.join(head,
-                                    '_'.join(self.data_dict.values()) + '.pdf')
-            if not os.path.exists(pdf_path):
-                self.pdf_path = pdf_path
+            head, tail = os.path.split(self.pdf_path)
+            new_pdf_path = os.path.join(
+                head, '_'.join(self.data_dict.values()) + '.pdf')
+
+            if os.path.exists(new_pdf_path):
+                if new_pdf_path != self.pdf_path:
+                    # 新路径和旧路径不一致，但新路径被占用，说明当前发票重复
+                    # 直接在文件名中提示发票重复
+                    date = str(datetime.now()).replace(':', '.')
+                    path = os.path.join(
+                        head,
+                        f"_发票号码_{self.data_dict.get('发票号码')}_存在重复_{date}.pdf")
+                    os.rename(self.pdf_path, path)
+                    self.pdf_path = path
             else:
-                self.pdf_path = os.path.join(
-                    head,
-                    f"{self.data_dict.get('发票号码')}_{str(datetime.now()).replace(':','.')}.pdf"
-                )
-            os.rename(self._raw_pdf_path, self.pdf_path)
+                os.rename(self.pdf_path, new_pdf_path)
+                self.pdf_path = new_pdf_path
         else:
-            self.pdf_path = self._raw_pdf_path
+            head, tail = os.path.split(self.pdf_path)
+            file_name, ext = tail.rsplit('.', 1)
+            file_name = f"__{file_name.split('_')[0]}"
+            new_pdf_path = os.path.join(
+                head,
+                f"{file_name}_解析失败_{str(datetime.now()).replace(':','.')}.pdf")
+            os.rename(self.pdf_path, new_pdf_path)
+            self.pdf_path = new_pdf_path
 
     def write2text(self):
         """将解析到的数据写至与pdf_file同名的txt文件中
@@ -115,9 +132,10 @@ class Invoices(list):
         num_set = set()
         for invoice in (Invoice(path) for path in self.pdf_paths):
             num = invoice.get('发票号码')
-            if num not in num_set:
+            if num not in num_set and num is not None:
                 num_set.add(num)
                 self.invoice_list.append(invoice)
+            invoice.rename()
         super().__init__(self.invoice_list)
 
     def write2csv(self):
@@ -139,6 +157,7 @@ def test_Invoice():
     ]
     for pdf_path in pdf_paths:
         invoice = Invoice(pdf_path)
+        invoice.rename()
         invoice.write2text()
         print(invoice.pdf_path)
 
@@ -150,4 +169,4 @@ def test_Invoices():
 
 if __name__ == '__main__':
     test_Invoice()
-    test_Invoices()
+    # test_Invoices()
