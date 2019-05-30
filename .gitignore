@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
 # C extensions
 *.so
 
@@ -104,3 +105,5 @@ venv.bak/
 .mypy_cache/
 tests/
 invoices*/
+云票儿/
+test.py
