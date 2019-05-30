@@ -10,6 +10,7 @@ from datetime import datetime
 class Invoice(dict):
     regex_list = [  # 不解析纳税人识别号
         re.compile(r'\s?(?P<城市>\w*普通发票)'),
+        re.compile(r'发票代码\s*[:：]\s*(?P<发票代码>(?:\d\s*){11}\d)?'),
         re.compile(r'发票号码\s*[:：]\s*(?P<发票号码>\d{8})?'),
         re.compile(r'开票日期\s*[:：]\s*(?P<开票日期>.+?年.+?月.+?日)?'),
         re.compile(r'机器编号\s*[:：]\s*(?P<机器编号>\d{12})?'),
@@ -24,6 +25,7 @@ class Invoice(dict):
 
     field_names = [
         '城市',
+        '发票代码',
         '发票号码',
         '开票日期',
         '机器编号',
@@ -37,9 +39,8 @@ class Invoice(dict):
     def __init__(self, pdf_path):
         self.is_success: bool  # 是否成功解析到了regex_list和regex_amount中的所有内容
         self.pdf_path = pdf_path
-        self.page0_text = self.get_page_text(pdf_path)
+        self.page0_text = self.get_page_text(self.pdf_path)
         self.data_dict = self.get_data_dict(self.page0_text)
-        # self.rename()
 
         super().__init__(self.data_dict)
 
@@ -76,37 +77,21 @@ class Invoice(dict):
             print(f'解析异常:{self.pdf_path}\n==>{Invoice.regex_amount.pattern}')
         return data_dict
 
-    def rename(self):
-        """对pdf文件重命名
+    @property
+    def identity(self):
+        """id由'发票代码'+'发票号码'构成
+
+        发票的唯一性由'发票代码'+'发票号码'来确定。
+        增值税电子普通发票的发票代码为12位，编码规则为：
+        第1位为0，第2—5位代表省、自治区、直辖市和计划单列市，
+        第6—7位代表年度，第8—10位代表批次，
+        第11—12位代表票种（11代表电子增值税普通发票）。
+        发票号码为8位，按年度、分批次编制。
+        http://www.chinatax.gov.cn/n810219/n810724/c1925563/content.html
+
         """
-
-        if self.is_success:
-            head, tail = os.path.split(self.pdf_path)
-            new_pdf_path = os.path.join(
-                head, '_'.join(self.data_dict.values()) + '.pdf')
-
-            if os.path.exists(new_pdf_path):
-                if new_pdf_path != self.pdf_path:
-                    # 新路径和旧路径不一致，但新路径被占用，说明当前发票重复
-                    # 直接在文件名中提示发票重复
-                    date = str(datetime.now()).replace(':', '.')
-                    path = os.path.join(
-                        head,
-                        f"_发票号码_{self.data_dict.get('发票号码')}_存在重复_{date}.pdf")
-                    os.rename(self.pdf_path, path)
-                    self.pdf_path = path
-            else:
-                os.rename(self.pdf_path, new_pdf_path)
-                self.pdf_path = new_pdf_path
-        else:
-            head, tail = os.path.split(self.pdf_path)
-            file_name, ext = tail.rsplit('.', 1)
-            file_name = f"__{file_name.split('_')[0]}"
-            new_pdf_path = os.path.join(
-                head,
-                f"{file_name}_解析失败_{str(datetime.now()).replace(':','.')}.pdf")
-            os.rename(self.pdf_path, new_pdf_path)
-            self.pdf_path = new_pdf_path
+        value = self.get('发票代码', '') + self.get('发票号码', '')
+        return value if self.is_success else ''
 
     def write2text(self):
         """将解析到的数据写至与pdf_file同名的txt文件中
@@ -119,24 +104,57 @@ class Invoice(dict):
                            for n, item in enumerate(self.data_dict.items()))
 
 
-class Invoices(list):
+class Invoices(dict):
     def __init__(self, pdf_dir: str):
         """获取目录中pdf文件路径列表
         """
         self.pdf_dir = pdf_dir
         self.pdf_paths = [
-            os.path.join(pdf_dir, i.name) for i in os.scandir(pdf_dir)
+            os.path.join(self.pdf_dir, i.name)
+            for i in os.scandir(self.pdf_dir)
             if i.is_file() and i.name.endswith('.pdf')
         ]
-        self.invoice_list = []
-        num_set = set()
-        for invoice in (Invoice(path) for path in self.pdf_paths):
-            num = invoice.get('发票号码')
-            if num not in num_set and num is not None:
-                num_set.add(num)
-                self.invoice_list.append(invoice)
-            invoice.rename()
-        super().__init__(self.invoice_list)
+
+        id_key_dict = dict()
+        for n, pdf_path in enumerate(self.pdf_paths):
+            invoice = Invoice(pdf_path)
+            id_key = invoice.identity
+            if id_key not in id_key_dict:
+                id_key_dict[id_key] = []
+            new_path = os.path.join(self.pdf_dir, f'{n:02d}.pdf')
+            os.rename(invoice.pdf_path, new_path)
+            invoice.pdf_path = new_path
+            id_key_dict[id_key].append(invoice)
+        super().__init__(id_key_dict)
+        self.rename_invoice()
+
+    def rename_invoice(self):
+        for id_key, invoice_list in self.items():
+            if id_key != '':
+                for i, invoice in enumerate(invoice_list):
+                    head, tail = os.path.split(invoice.pdf_path)
+                    if i == 0:
+                        new_path = os.path.join(
+                            head,
+                            '_'.join(invoice.data_dict.values()) + '.pdf')
+                        os.rename(invoice.pdf_path, new_path)
+                        invoice.pdf_path = new_path
+                    else:
+                        new_path = os.path.join(
+                            head,
+                            f"_重复_{invoice.get('发票代码')}_{invoice.get('发票号码')}_{i:02d}.pdf"
+                        )
+                        os.rename(invoice.pdf_path, new_path)
+                        invoice.pdf_path = new_path
+            else:
+                for i, invoice in enumerate(invoice_list):
+                    head, tail = os.path.split(invoice.pdf_path)
+                    file_name, ext = tail.rsplit('.', 1)
+                    file_name = f"__{file_name.split('_')[0]}"
+                    new_path = os.path.join(head,
+                                            f"{file_name}_解析失败__{i:02d}.pdf")
+                    os.rename(invoice.pdf_path, new_path)
+                    invoice.pdf_path = new_path
 
     def write2csv(self):
         """将self.invoices写入到pdf_dir目录下的csv文件中
@@ -146,8 +164,12 @@ class Invoices(list):
         with open(csv_file_path, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=Invoice.field_names)
             writer.writeheader()
-            for invoice in self.invoice_list:
+            for invoice in (v[0] for k, v in self.items() if k != ''):
                 writer.writerow(invoice)
+
+    def write2txt(self):
+        for invoice in (v[0] for k, v in self.items() if k != ''):
+            invoice.write2text()
 
 
 def test_Invoice():
@@ -157,16 +179,19 @@ def test_Invoice():
     ]
     for pdf_path in pdf_paths:
         invoice = Invoice(pdf_path)
-        invoice.rename()
         invoice.write2text()
-        print(invoice.pdf_path)
+        print(f"{invoice.pdf_path}-->{invoice.id}")
+        # 解析到的内容见对应的txt文件
 
 
 def test_Invoices():
     invoices = Invoices(r'.\tests')
-    pprint(list(invoices.invoice_iter))
+
+    invoices.write2csv()
+    invoices.write2txt()
+    # pprint(invoices)
 
 
 if __name__ == '__main__':
-    test_Invoice()
-    # test_Invoices()
+    # test_Invoice()
+    test_Invoices()

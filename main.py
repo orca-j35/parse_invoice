@@ -27,9 +27,8 @@ from invoice_parser import Invoices
 if __name__ == '__main__':
     print('如需退出程序，可输入q')
     while True:
-        file_name = input("创建.md文件:")
-        if file_name in ('q', 'Q'):
-            break
         pdf_dir = input('输入内含pdf电子发票的文件夹:')
+        if pdf_dir in ('q', 'Q'):
+            break
         invoices = Invoices(pdf_dir)
         invoices.write2csv()
