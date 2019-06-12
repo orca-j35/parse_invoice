@@ -2,6 +2,7 @@ import pdfplumber
 import re
 import os
 import csv
+import pandas
 from pprint import pprint
 from decimal import Decimal
 from datetime import datetime
@@ -157,7 +158,7 @@ class Invoices(dict):
                     invoice.pdf_path = new_path
 
     def write2csv(self):
-        """将self.invoices写入到pdf_dir目录下的csv文件中
+        """将非重复数据写入到pdf_dir目录下的csv文件中
         """
         csv_file_name = f"{str(datetime.now()).replace(':','.')}.csv"
         csv_file_path = os.path.join(self.pdf_dir, csv_file_name)
@@ -166,6 +167,18 @@ class Invoices(dict):
             writer.writeheader()
             for invoice in (v[0] for k, v in self.items() if k != ''):
                 writer.writerow(invoice)
+
+    def write2excel(self):
+        """将非重复数据写入到pdf_dir目录下的xlsx文件中
+        """
+        xlsx_file_name = f"{str(datetime.now()).replace(':','.')}.xlsx"
+        xlsx_file_path = os.path.join(self.pdf_dir, xlsx_file_name)
+        # 将数据转换为DataFrame对象
+        df = pandas.DataFrame(v[0] for k, v in self.items() if k != '')
+        # For compatibility with to_csv(), to_excel serializes lists and dicts to strings before writing.
+        # http://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.to_excel.html
+        # 需要调整excel中小写金额的格式
+        df.to_excel(xlsx_file_path)
 
     def write2txt(self):
         for invoice in (v[0] for k, v in self.items() if k != ''):
@@ -188,6 +201,7 @@ def test_Invoices():
     invoices = Invoices(r'.\tests')
 
     invoices.write2csv()
+    invoices.write2excel()
     invoices.write2txt()
     # pprint(invoices)
 
